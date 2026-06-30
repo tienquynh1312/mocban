@@ -48,6 +48,8 @@ export interface UserAccount {
   mappedMemberId?: string; // ID của nút thành viên trong Cây gia phả
   rejectionReason?: string;
   blockReason?: string;
+  clanId?: string;     // Dòng họ mà tài khoản thuộc về
+  clanName?: string;   // Tên dòng họ (lấy từ tbl_clan_info, dùng để Admin nhóm hiển thị)
 }
 
 export interface ClanMember {
@@ -108,6 +110,10 @@ export interface ClanEvent {
   startDate: string; // Dương lịch YYYY-MM-DD
   startTime?: string; // HH:MM
   endDate?: string;
+  endTime?: string; // HH:MM
+  attendeeType?: "ALL" | "ROLE" | "CUSTOM"; // Thành phần tham dự
+  attendeeRoles?: string[];
+  attendeeIds?: string[];
   lunarDateLabel?: string; // Ngày Âm lịch tương ứng (ví dụ: 10/03 Âm lịch)
   location: string;
   description: string;
@@ -119,8 +125,29 @@ export interface ClanEvent {
   rsvps: EventRSVP[];
   cancelReason?: string;
   postponeReason?: string;
-  media?: string[]; // Danh sách URL hình ảnh/tập tin sau sự kiện
+  media?: string[]; // (Cũ, không còn dùng) — tư liệu sự kiện nay quản lý qua EventMedia/bảng riêng
 }
+
+// ─── Tư liệu / Hình ảnh sự kiện (lưu trữ sau sự kiện) ──────────────────────────
+export enum MediaFileType {
+  IMAGE = "IMAGE",
+  VIDEO = "VIDEO",
+  DOCUMENT = "DOCUMENT",
+}
+
+export interface EventMedia {
+  id: string;
+  eventId: string;
+  fileName: string;       // Tên tệp đã lưu trên server
+  originalName: string;   // Tên tệp gốc do người dùng tải lên
+  fileUrl: string;        // Đường dẫn truy cập tệp
+  fileType: MediaFileType;
+  mimeType?: string;
+  fileSize: number;       // Bytes
+  uploadedBy?: string;
+  uploadedAt: string;
+}
+
 
 export enum TransactionType {
   INCOME = "INCOME",    // Thu
@@ -154,6 +181,9 @@ export interface AnnualQuota {
   year: number;
   amountPerMember: number; // Định mức đóng hằng năm của mỗi đinh/thành viên
   description: string;
+  notes?: string;
+  updatedAt?: string;
+  clanId?: string;
 }
 
 export interface AuditLog {

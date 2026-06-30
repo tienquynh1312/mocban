@@ -108,19 +108,41 @@ router.post("/", requireRole("ADMIN", "LEADER"), async (req, res) => {
 });
 
 // ── PUT /api/members/:id ──────────────────────────────────────────────────────
-router.put("/:id", requireRole("ADMIN", "LEADER"), async (req, res) => {
+// BR1: Chỉ tài khoản mang quyền Trưởng họ mới có quyền sửa thông tin/cấu trúc Node.
+router.put("/:id", requireRole("LEADER"), async (req, res) => {
   const fields = [
     "fullName","gender","livingStatus","birthDate","birthDateLunar",
     "deathDate","deathDateLunar","phone","email","currentAddress",
     "originAddress","generation","fatherId","motherId","spouseId",
     "job","representativeRole","notes"
   ];
+
+  // BR4: lấy trạng thái TRƯỚC khi sửa để ghi nhật ký so sánh trước/sau
+  const [beforeRows] = await pool.query("SELECT * FROM tbl_members WHERE id = ?", [req.params.id]);
+  if (!beforeRows.length) return res.status(404).json({ error: "Không tìm thấy thành viên." });
+  const before = beforeRows[0];
+
   const updates = [];
   const params = [];
+  const fieldLabels = {
+    fullName: "Họ và tên", gender: "Giới tính", livingStatus: "Trạng thái",
+    birthDate: "Ngày sinh", birthDateLunar: "Ngày sinh Âm lịch",
+    deathDate: "Ngày mất", deathDateLunar: "Ngày mất Âm lịch",
+    phone: "SĐT", email: "Email", currentAddress: "Địa chỉ hiện tại",
+    originAddress: "Quê quán", generation: "Đời", fatherId: "Cha liên kết",
+    motherId: "Mẹ liên kết", spouseId: "Vợ/Chồng liên kết",
+    job: "Nghề nghiệp", representativeRole: "Chức vị", notes: "Ghi chú",
+  };
+  const changes = [];
   for (const f of fields) {
     if (req.body[f] !== undefined) {
+      const newVal = req.body[f] === "" ? null : req.body[f];
       updates.push(`${f} = ?`);
-      params.push(req.body[f] === "" ? null : req.body[f]);
+      params.push(newVal);
+      const oldVal = before[f];
+      if (String(oldVal ?? "") !== String(newVal ?? "")) {
+        changes.push(`[${fieldLabels[f] || f}] từ [${oldVal ?? "trống"}] thành [${newVal ?? "trống"}]`);
+      }
     }
   }
   if (!updates.length) return res.status(400).json({ error: "Không có dữ liệu cập nhật." });
@@ -129,10 +151,13 @@ router.put("/:id", requireRole("ADMIN", "LEADER"), async (req, res) => {
     params.push(req.params.id);
     await pool.query(`UPDATE tbl_members SET ${updates.join(",")} WHERE id = ?`, params);
 
+    // BR4: Nhật ký lưu rõ trạng thái trước/sau của từng trường đã thay đổi
+    const details = changes.length
+      ? `Sửa thành viên [${before.fullName}]: ${changes.join("; ")}`
+      : `Cập nhật thành viên [${before.fullName}] (không thay đổi dữ liệu)`;
     await pool.query(
       "INSERT INTO tbl_audit_logs (actorName,action,module,details) VALUES (?,?,?,?)",
-      [req.user.fullName, "CẬP NHẬT THÀNH VIÊN", "GiaPha",
-       `Chỉnh sửa thông tin tộc viên id=${req.params.id}`]
+      [req.user.fullName, "CẬP NHẬT THÀNH VIÊN", "GiaPha", details]
     );
 
     const [rows] = await pool.query("SELECT * FROM tbl_members WHERE id = ?", [req.params.id]);
@@ -146,6 +171,7 @@ router.put("/:id", requireRole("ADMIN", "LEADER"), async (req, res) => {
 // ── DELETE /api/members/:id ───────────────────────────────────────────────────
 router.delete("/:id", requireRole("ADMIN", "LEADER"), async (req, res) => {
   try {
+    const { reason, notes } = req.body || {};
     const [rows] = await pool.query("SELECT fullName FROM tbl_members WHERE id = ?", [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: "Không tìm thấy." });
 
@@ -153,10 +179,13 @@ router.delete("/:id", requireRole("ADMIN", "LEADER"), async (req, res) => {
     await pool.query("UPDATE tbl_accounts SET mappedMemberId = NULL WHERE mappedMemberId = ?", [req.params.id]);
     await pool.query("DELETE FROM tbl_members WHERE id = ?", [req.params.id]);
 
+    const detailParts = [`Đã xóa tộc viên [${rows[0].fullName}] (id=${req.params.id})`];
+    if (reason) detailParts.push(`Lý do: ${reason}`);
+    if (notes) detailParts.push(`Ghi chú: ${notes}`);
+
     await pool.query(
       "INSERT INTO tbl_audit_logs (actorName,action,module,details) VALUES (?,?,?,?)",
-      [req.user.fullName, "XÓA THÀNH VIÊN GIA PHẢ", "GiaPha",
-       `Đã xóa tộc viên [${rows[0].fullName}] (id=${req.params.id})`]
+      [req.user.fullName, "XÓA THÀNH VIÊN GIA PHẢ", "GiaPha", detailParts.join(". ")]
     );
 
     return res.json({ message: "Đã xóa thành công." });

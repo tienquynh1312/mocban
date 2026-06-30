@@ -118,8 +118,12 @@ router.put("/:id", requireRole("ADMIN", "LEADER"), async (req, res) => {
     const [rsvps] = await pool.query("SELECT * FROM tbl_event_rsvps WHERE eventId = ?", [req.params.id]);
     return res.json({ ...rows[0], rsvps });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Lỗi server." });
+    console.error("PUT /api/events/:id lỗi:", err);
+    // Trả về thông tin lỗi thật (sqlMessage nếu có) để dễ chẩn đoán — đây là dự án demo/nội bộ.
+    return res.status(500).json({
+      error: `Lỗi server khi cập nhật sự kiện: ${err.sqlMessage || err.message || "Không rõ nguyên nhân"}`,
+      code: err.code || null
+    });
   }
 });
 

@@ -20,7 +20,7 @@ export { CLAN_PROFILE_STATIC as CLAN_PROFILE };
 
 export type ActiveTab =
   | "landing" | "giamap" | "member_grid" | "events"
-  | "finance" | "accounts" | "profile";
+  | "finance" | "accounts" | "profile" | "clan_info";
 
 export interface RegisterForm {
   fullName: string; birthDate: string; gender: string;
@@ -53,9 +53,9 @@ interface AppActions {
   setActiveTab: (tab: ActiveTab) => void;
 
   refreshMembers: () => Promise<void>;
-  addMember: (m: any) => Promise<void>;
+  addMember: (m: any) => Promise<any>;
   updateMember: (m: ClanMember) => Promise<void>;
-  deleteMember: (id: string) => Promise<void>;
+  deleteMember: (id: string, reason?: string, notes?: string) => Promise<void>;
 
   refreshEvents: () => Promise<void>;
   addEvent: (e: any) => Promise<void>;
@@ -64,6 +64,7 @@ interface AppActions {
 
   addTransaction: (t: any) => Promise<void>;
   updateQuota: (q: AnnualQuota) => Promise<void>;
+  submitRsvp: (eventId: string, status: string, additionalGuests?: number, reason?: string) => Promise<void>;
 
   refreshAccounts: () => Promise<void>;
   approveByAdmin: (id: string) => Promise<void>;
@@ -76,6 +77,7 @@ interface AppActions {
   approveDeleteAccount: (id: string) => Promise<void>;
   rejectDeleteAccount: (id: string, reason: string) => Promise<void>;
   editAccount: (id: string, data: Partial<UserAccount>) => Promise<void>;
+  unlinkAccountFromNode: (accountId: string) => Promise<void>;
 }
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
@@ -143,10 +145,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setShowLoginModal(false);
       return null;
     } catch (err: any) {
-      // Backend trả về { error, detail } cho REJECTED
-      if (err.detail) {
-        return `__REJECTED__${err.detail}`;
-      }
+      if (err.detail) return `__REJECTED__${err.detail}`;
       return err.message || "Đăng nhập thất bại.";
     }
   };
@@ -187,8 +186,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const addMember = async (m: any) => {
     const { id, ...body } = m;
-    await membersApi.create(body);
+    const created = await membersApi.create(body);
     await refreshMembers();
+    return created;
   };
 
   const updateMember = async (m: ClanMember) => {
@@ -196,8 +196,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await refreshMembers();
   };
 
-  const deleteMember = async (id: string) => {
-    await membersApi.delete(id);
+  const deleteMember = async (id: string, reason?: string, notes?: string) => {
+    await membersApi.delete(id, reason, notes);
     await refreshMembers();
   };
 
@@ -248,9 +248,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await refreshTransactions();
   };
 
+  const submitRsvp = async (eventId: string, status: string, additionalGuests = 0, reason?: string) => {
+    await eventsApi.rsvp(eventId, status, additionalGuests, reason);
+    await refreshEvents();
+  };
+
   const updateQuota = async (q: AnnualQuota) => {
-    const updated = await financeApi.updateQuota(q.year, q.amountPerMember, q.description);
-    setAnnualQuota(updated);
+    const updated = await financeApi.updateQuota(q.year, q.amountPerMember, q.description, q.notes);
+    // Only update context if it's the current year quota
+    if (q.year === new Date().getFullYear()) {
+      setAnnualQuota(updated);
+    }
   };
 
   // ── Accounts ─────────────────────────────────────────────────────────────────
@@ -259,7 +267,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try {
       const data = await accountsApi.list();
       setAccounts(data);
-    } catch {}
+    } catch (err) {
+      console.error("Không thể tải danh sách tài khoản:", err);
+    }
   };
 
   const refreshAuditLogs = async () => {
@@ -320,6 +330,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await refreshAccounts();
   };
 
+  const unlinkAccountFromNode = async (accountId: string) => {
+    await accountsApi.unlinkMember(accountId);
+    await refreshAccounts();
+    await refreshMembers();
+  };
+
   return (
     <AppContext.Provider value={{
       isLoggedIn, currentAccount, showLoginModal, showRegisterModal,
@@ -329,10 +345,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setActiveTab,
       refreshMembers, addMember, updateMember, deleteMember,
       refreshEvents, addEvent, updateEvent, deleteEvent,
-      addTransaction, updateQuota,
+      addTransaction, updateQuota, submitRsvp,
       refreshAccounts, approveByAdmin, approveByLeader, rejectAccount,
       blockAccount, unblockAccount, updateAccountRole,
-      requestDeleteAccount, approveDeleteAccount, rejectDeleteAccount, editAccount,
+      requestDeleteAccount, approveDeleteAccount, rejectDeleteAccount,
+      editAccount, unlinkAccountFromNode,
     }}>
       {children}
     </AppContext.Provider>

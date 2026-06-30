@@ -55,18 +55,20 @@ interface AppActions {
   setCurrentAccount: (acc: UserAccount) => void;
   setActiveTab: (tab: ActiveTab) => void;
   refreshMembers: () => Promise<void>;
-  addMember: (m: Omit<ClanMember, "id">) => Promise<void>;
+  addMember: (m: Omit<ClanMember, "id">) => Promise<any>;
   updateMember: (m: ClanMember) => Promise<void>;
   deleteMember: (id: string) => Promise<void>;
   refreshEvents: () => Promise<void>;
   addEvent: (e: Omit<ClanEvent, "id">) => Promise<void>;
   updateEvent: (e: ClanEvent) => Promise<void>;
   deleteEvent: (id: string) => Promise<void>;
+  submitRsvp: (eventId: string, status: string, additionalGuests?: number, reason?: string) => Promise<void>;
   addTransaction: (t: Omit<FundTransaction, "id">) => Promise<void>;
   updateQuota: (q: AnnualQuota) => Promise<void>;
   refreshAccounts: () => Promise<void>;
   approveByAdmin: (id: string) => Promise<void>;
   approveByLeader: (id: string, role: UserRole, memberId?: string) => Promise<void>;
+  unlinkAccountFromNode: (accountId: string) => Promise<void>;
   rejectAccount: (id: string, reason: string) => Promise<void>;
   blockAccount: (id: string, reason: string) => Promise<void>;
   unblockAccount: (id: string) => Promise<void>;
@@ -153,8 +155,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const addMember = async (m: Omit<ClanMember, "id">) => {
-    await membersApi.create(m);
+    const created = await membersApi.create(m);
     await refreshMembers();
+    return created;
   };
 
   const updateMember = async (m: ClanMember) => {
@@ -181,6 +184,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const updateEvent = async (e: ClanEvent) => {
     await eventsApi.update(e.id, e);
+    await refreshEvents();
+  };
+
+  // Ghi nhận RSVP của thành viên — dùng đúng endpoint POST /events/:id/rsvp
+  // (KHÔNG dùng updateEvent/PUT vì route đó chỉ cho ADMIN/LEADER và không lưu rsvps).
+  const submitRsvp = async (eventId: string, status: string, additionalGuests = 0, reason?: string) => {
+    await eventsApi.rsvp(eventId, status, additionalGuests, reason);
     await refreshEvents();
   };
 
@@ -219,6 +229,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await refreshAccounts();
   };
 
+  const unlinkAccountFromNode = async (accountId: string) => {
+    await accountsApi.unlinkMember(accountId);
+    await refreshAccounts();
+    await refreshMembers();
+  };
+
   const rejectAccount = async (id: string, reason: string) => {
     await accountsApi.reject(id, reason);
     await refreshAccounts();
@@ -248,9 +264,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       login, logout, register, setShowLoginModal, setShowRegisterModal, setCurrentAccount,
       setActiveTab,
       refreshMembers, addMember, updateMember, deleteMember,
-      refreshEvents, addEvent, updateEvent, deleteEvent,
+      refreshEvents, addEvent, updateEvent, deleteEvent, submitRsvp,
       addTransaction, updateQuota,
-      refreshAccounts, approveByAdmin, approveByLeader, rejectAccount,
+      refreshAccounts, approveByAdmin, approveByLeader, unlinkAccountFromNode, rejectAccount,
       blockAccount, unblockAccount, updateAccountRole,
     }}>
       {children}

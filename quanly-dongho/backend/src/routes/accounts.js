@@ -10,6 +10,30 @@ const { authenticate, requireRole, requireActive } = require("../middleware/auth
 const router = express.Router();
 router.use(authenticate, requireActive);
 
+// Đảm bảo bảng tbl_clan_info tồn tại trước khi JOIN (tránh lỗi nếu module
+// clanInfo.js chưa kịp chạy hoặc DB mới chưa có bảng này).
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tbl_clan_info (
+        id                   INT          AUTO_INCREMENT PRIMARY KEY,
+        clanId               VARCHAR(50)  NOT NULL UNIQUE,
+        clanName             VARCHAR(150) NOT NULL,
+        originHistory        TEXT         NOT NULL,
+        homeTown             VARCHAR(255) NOT NULL,
+        currentResidenceArea VARCHAR(255) DEFAULT NULL,
+        templeAddress        VARCHAR(255) NOT NULL,
+        ancestorDayLunar     VARCHAR(50)  NOT NULL,
+        clanRegulations      TEXT         NOT NULL,
+        updatedAt            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        updatedBy            VARCHAR(100) NOT NULL DEFAULT 'Hệ thống'
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  } catch (err) {
+    console.error("[accounts] Không thể đảm bảo bảng tbl_clan_info:", err.message);
+  }
+})();
+
 // ── GET /api/accounts ─────────────────────────────────────────────────────────
 router.get("/", requireRole("ADMIN", "LEADER"), async (req, res) => {
   try {
@@ -18,22 +42,40 @@ router.get("/", requireRole("ADMIN", "LEADER"), async (req, res) => {
 
     let where = [];
     let params = [];
-    if (req.query.status) { where.push("status = ?"); params.push(req.query.status); }
-    if (req.query.role)   { where.push("role = ?");   params.push(req.query.role); }
+    if (req.query.status) { where.push("a.status = ?"); params.push(req.query.status); }
+    if (req.query.role)   { where.push("a.role = ?");   params.push(req.query.role); }
     // Nếu không phải Admin → chỉ lấy tài khoản thuộc dòng họ mình
     if (!isAdmin && clanId) {
-      where.push("(clanId = ? OR role = 'ADMIN')");
+      where.push("(a.clanId = ? OR a.role = 'ADMIN')");
       params.push(clanId);
     }
     const wc = where.length ? "WHERE " + where.join(" AND ") : "";
 
-    const [rows] = await pool.query(
-      `SELECT id,fullName,phone,email,birthDate,gender,hometown,address,notes,
-              role,status,inviteCode,mappedMemberId,rejectionReason,blockReason,
-              registeredAt,clanId
-       FROM tbl_accounts ${wc} ORDER BY registeredAt DESC`,
-      params
-    );
+    let rows;
+    try {
+      // Cố gắng lấy kèm clanName (để Admin nhóm tài khoản theo dòng họ)
+      [rows] = await pool.query(
+        `SELECT a.id,a.fullName,a.phone,a.email,a.birthDate,a.gender,a.hometown,a.address,a.notes,
+                a.role,a.status,a.inviteCode,a.mappedMemberId,a.rejectionReason,a.blockReason,
+                a.registeredAt,a.clanId,ci.clanName
+         FROM tbl_accounts a
+         LEFT JOIN tbl_clan_info ci ON ci.clanId = a.clanId
+         ${wc} ORDER BY a.registeredAt DESC`,
+        params
+      );
+    } catch (joinErr) {
+      // Fallback an toàn: nếu JOIN lỗi vì bất kỳ lý do gì (bảng chưa tạo, cột thiếu...),
+      // vẫn trả về danh sách tài khoản bình thường, không để mất dữ liệu hiển thị.
+      console.error("[accounts] JOIN tbl_clan_info lỗi, dùng fallback không JOIN:", joinErr.message);
+      [rows] = await pool.query(
+        `SELECT a.id,a.fullName,a.phone,a.email,a.birthDate,a.gender,a.hometown,a.address,a.notes,
+                a.role,a.status,a.inviteCode,a.mappedMemberId,a.rejectionReason,a.blockReason,
+                a.registeredAt,a.clanId
+         FROM tbl_accounts a
+         ${wc} ORDER BY a.registeredAt DESC`,
+        params
+      );
+    }
     return res.json(rows);
   } catch (err) {
     console.error(err);
@@ -86,6 +128,31 @@ router.put("/:id/approve-leader", requireRole("LEADER"), async (req, res) => {
     );
     return res.json({ message: "Đã kích hoạt tài khoản." });
   } catch (err) {
+    return res.status(500).json({ error: "Lỗi server." });
+  }
+});
+
+// ── PUT /api/accounts/:id/unlink-member ───────────────────────────────────────
+// Alt Flow 4a (UC2.4 - Sửa thành viên): Hủy liên kết tài khoản khỏi Node hiện tại,
+// đưa tài khoản về trạng thái tự do chờ map lại (chỉ gỡ mappedMemberId, KHÔNG đổi
+// status/role để không ảnh hưởng tới quyền đăng nhập hiện có — BR2).
+router.put("/:id/unlink-member", requireRole("LEADER"), async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT * FROM tbl_accounts WHERE id=?", [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: "Không tìm thấy tài khoản." });
+    if (!rows[0].mappedMemberId) {
+      return res.status(400).json({ error: "Tài khoản này hiện không liên kết với Node nào." });
+    }
+
+    await pool.query("UPDATE tbl_accounts SET mappedMemberId=NULL WHERE id=?", [req.params.id]);
+    await pool.query(
+      "INSERT INTO tbl_audit_logs (actorName,action,module,details) VALUES (?,?,?,?)",
+      [req.user.fullName, "HỦY LIÊN KẾT TÀI KHOẢN", "GiaPha",
+       `Hủy liên kết tài khoản [${rows[0].fullName}] khỏi Node id=${rows[0].mappedMemberId}, đưa về trạng thái tự do chờ map lại`]
+    );
+    return res.json({ message: "Đã hủy liên kết tài khoản." });
+  } catch (err) {
+    console.error(err);
     return res.status(500).json({ error: "Lỗi server." });
   }
 });
@@ -266,6 +333,10 @@ router.put("/:id/edit", requireRole("LEADER", "ADMIN"), async (req, res) => {
        notes??rows[0].notes, req.params.id]
     );
     if (role) {
+      // LEADER không được tự nâng tài khoản khác lên LEADER qua edit
+      if (req.user.role === "LEADER" && role === "LEADER") {
+        return res.status(403).json({ error: "Không thể chỉnh chức vụ thành Trưởng họ. Chỉ ADMIN mới có quyền này." });
+      }
       await pool.query("UPDATE tbl_accounts SET role=? WHERE id=?", [role, req.params.id]);
     }
     await pool.query(

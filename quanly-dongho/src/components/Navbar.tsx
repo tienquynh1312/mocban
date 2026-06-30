@@ -4,13 +4,14 @@
  */
 import React, { useState } from "react";
 import {
-  Trees, Users, BookOpen, Calendar, Wallet, Shield,
+  Trees, BookOpen, Calendar, Wallet, Shield,
   LogIn, LogOut, UserPlus, Menu, X, Lock, Crown,
-  Landmark, ChevronDown
+  Landmark, FileText, ChevronDown, KeyRound
 } from "lucide-react";
-import { useApp, ActiveTab, CLAN_PROFILE } from "../context/AppContext";
+import { useApp, ActiveTab } from "../context/AppContext";
 import { UserRole, AccountStatus } from "../types";
 import { RoleBadge } from "./ui";
+import { ChangePasswordModal } from "./AuthModals";
 
 const ROLE_COLOR: Record<UserRole, string> = {
   [UserRole.ADMIN]:     "text-purple-600 bg-purple-50 border-purple-200",
@@ -26,6 +27,8 @@ export default function Navbar() {
     logout, setShowLoginModal, setShowRegisterModal
   } = useApp();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
 
   const isActive = (t: ActiveTab) => activeTab === t;
   const tabCls = (t: ActiveTab) =>
@@ -35,23 +38,25 @@ export default function Navbar() {
   const pendingLock = isLoggedIn && currentAccount.status !== AccountStatus.ACTIVE;
 
   // Tabs available by role
-  const showGiapha = isLoggedIn && currentAccount.role !== UserRole.GUEST;
-  const showMembers = isLoggedIn && currentAccount.role !== UserRole.GUEST;
-  const showEvents = isLoggedIn && currentAccount.role !== UserRole.ADMIN && currentAccount.role !== UserRole.GUEST;
-  const showFinance = isLoggedIn && currentAccount.role !== UserRole.ADMIN && currentAccount.role !== UserRole.GUEST;
+  const showGiapha   = isLoggedIn && currentAccount.role !== UserRole.GUEST && currentAccount.role !== UserRole.ADMIN;
+  const showMembers  = isLoggedIn && currentAccount.role !== UserRole.GUEST && currentAccount.role !== UserRole.ADMIN;
+  const showEvents   = isLoggedIn && currentAccount.role !== UserRole.ADMIN && currentAccount.role !== UserRole.GUEST;
+  const showFinance  = isLoggedIn && currentAccount.role !== UserRole.ADMIN && currentAccount.role !== UserRole.GUEST;
   const showAccounts = isLoggedIn && (currentAccount.role === UserRole.ADMIN || currentAccount.role === UserRole.LEADER);
+  const showClanInfo = isLoggedIn && currentAccount.role === UserRole.LEADER;
 
   const navItems = [
-    { tab: "landing" as ActiveTab, label: "Trang chủ", icon: Landmark, show: false },
-    { tab: "giamap" as ActiveTab, label: "Gia phả", icon: Trees, show: showGiapha },
-    { tab: "member_grid" as ActiveTab, label: "Thành viên", icon: BookOpen, show: showMembers },
-    { tab: "events" as ActiveTab, label: "Sự kiện", icon: Calendar, show: showEvents },
-    { tab: "finance" as ActiveTab, label: "Quỹ dòng họ", icon: Wallet, show: showFinance },
-    { tab: "accounts" as ActiveTab, label: "Tài khoản", icon: Shield, show: showAccounts },
-    { tab: "profile" as ActiveTab, label: "Tộc ước", icon: Crown, show: false },
+    { tab: "giamap"    as ActiveTab, label: "Gia phả",            icon: Trees,    show: showGiapha   },
+    { tab: "member_grid" as ActiveTab, label: "Thành viên",        icon: BookOpen, show: showMembers  },
+    { tab: "events"    as ActiveTab, label: "Sự kiện",             icon: Calendar, show: showEvents   },
+    { tab: "finance"   as ActiveTab, label: "Quỹ dòng họ",         icon: Wallet,   show: showFinance  },
+    { tab: "accounts"  as ActiveTab, label: "Tài khoản",           icon: Shield,   show: showAccounts },
+    { tab: "clan_info" as ActiveTab, label: "Thông tin dòng họ",   icon: FileText, show: showClanInfo },
+    { tab: "profile"   as ActiveTab, label: "Tộc ước",             icon: Crown,    show: false        },
   ];
 
   return (
+    <>
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-stone-200 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
         <div className="flex items-center justify-between h-16">
@@ -72,7 +77,7 @@ export default function Navbar() {
               <button key={tab} onClick={() => setActiveTab(tab)} className={tabCls(tab)}>
                 <Icon className="w-3.5 h-3.5" />
                 {label}
-                {pendingLock && tab !== "landing" && tab !== "profile" && (
+                {pendingLock && tab !== "landing" && tab !== "profile" && tab !== "clan_info" && (
                   <Lock className="w-2.5 h-2.5 text-amber-500 ml-0.5" />
                 )}
               </button>
@@ -82,19 +87,37 @@ export default function Navbar() {
           {/* Auth area */}
           <div className="flex items-center gap-2">
             {isLoggedIn ? (
-              <div className="flex items-center gap-2">
-                {/* Role indicator */}
-                <div className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold ${ROLE_COLOR[currentAccount.role]}`}>
-                  <div className="w-6 h-6 rounded-full bg-white/60 flex items-center justify-center font-bold text-xs">
+              <div className="relative">
+                <button onClick={() => setShowUserMenu(v => !v)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold cursor-pointer transition-colors ${ROLE_COLOR[currentAccount.role]}`}>
+                  <div className="w-6 h-6 rounded-full bg-white/60 flex items-center justify-center font-bold text-xs flex-shrink-0">
                     {currentAccount.fullName.charAt(0)}
                   </div>
-                  <span className="max-w-[100px] truncate">{currentAccount.fullName}</span>
-                </div>
-                <button onClick={logout}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-stone-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer">
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Đăng xuất</span>
+                  <span className="hidden sm:inline max-w-[100px] truncate">{currentAccount.fullName}</span>
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showUserMenu ? "rotate-180" : ""}`} />
                 </button>
+
+                {showUserMenu && (
+                  <>
+                    {/* Lớp phủ trong suốt để đóng dropdown khi click ra ngoài */}
+                    <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+                    <div className="absolute right-0 top-full mt-2 w-56 bg-white border border-stone-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                      <div className="px-4 py-3 border-b border-stone-100">
+                        <p className="text-sm font-bold text-stone-800 truncate">{currentAccount.fullName}</p>
+                        <p className="text-[11px] text-stone-400 truncate">{currentAccount.phone || currentAccount.email}</p>
+                        <div className="mt-1.5"><RoleBadge role={currentAccount.role} /></div>
+                      </div>
+                      <button onClick={() => { setShowUserMenu(false); setShowChangePassword(true); }}
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-stone-600 hover:bg-stone-50 cursor-pointer transition-colors">
+                        <KeyRound className="w-3.5 h-3.5" /> Đổi mật khẩu
+                      </button>
+                      <button onClick={() => { setShowUserMenu(false); logout(); }}
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer transition-colors border-t border-stone-100">
+                        <LogOut className="w-3.5 h-3.5" /> Đăng xuất
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             ) : (
               <div className="flex items-center gap-2">
@@ -129,14 +152,29 @@ export default function Navbar() {
               </button>
             ))}
             {isLoggedIn && (
-              <div className={`mx-4 mt-2 px-3 py-2 rounded-xl border text-xs font-semibold ${ROLE_COLOR[currentAccount.role]} flex items-center gap-2`}>
-                <RoleBadge role={currentAccount.role} />
-                <span>{currentAccount.fullName}</span>
+              <div className="mx-4 mt-2 flex flex-col gap-1">
+                <div className={`px-3 py-2 rounded-xl border text-xs font-semibold ${ROLE_COLOR[currentAccount.role]} flex items-center gap-2`}>
+                  <RoleBadge role={currentAccount.role} />
+                  <span>{currentAccount.fullName}</span>
+                </div>
+                <button onClick={() => { setMobileOpen(false); setShowChangePassword(true); }}
+                  className="flex items-center gap-2.5 px-3 py-2.5 text-sm font-medium text-stone-700 hover:bg-stone-50 rounded-xl cursor-pointer">
+                  <KeyRound className="w-4 h-4" /> Đổi mật khẩu
+                </button>
+                <button onClick={() => { setMobileOpen(false); logout(); }}
+                  className="flex items-center gap-2.5 px-3 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 rounded-xl cursor-pointer">
+                  <LogOut className="w-4 h-4" /> Đăng xuất
+                </button>
               </div>
             )}
           </div>
         )}
       </div>
     </header>
+
+      {showChangePassword && (
+        <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
+      )}
+    </>
   );
 }

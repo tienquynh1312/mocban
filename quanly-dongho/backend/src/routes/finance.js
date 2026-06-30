@@ -18,7 +18,7 @@ router.get("/transactions", async (req, res) => {
   try {
     const { type, category, year, page = 1, limit = 50 } = req.query;
     const clanId = req.user.clanId;
-    let where = ["clanId = ?"];
+    let where = ["t.clanId = ?"];
     let params = [clanId];
 
     if (type)     { where.push("t.type = ?");          params.push(type); }
@@ -50,7 +50,7 @@ router.get("/transactions", async (req, res) => {
 });
 
 // ── POST /api/finance/transactions ────────────────────────────────────────────
-router.post("/transactions", requireRole("ADMIN", "LEADER", "TREASURER"), async (req, res) => {
+router.post("/transactions", requireRole("TREASURER"), async (req, res) => {
   const { type, category, amount, date, payerOrReceiver, memberId, description } = req.body;
 
   if (!type || !amount || !date || !payerOrReceiver || !description) {
@@ -95,11 +95,12 @@ router.post("/transactions", requireRole("ADMIN", "LEADER", "TREASURER"), async 
 router.get("/quota", async (req, res) => {
   try {
     const year = req.query.year || new Date().getFullYear();
+    const clanId = req.user.clanId || "default";
     const [rows] = await pool.query(
-      "SELECT * FROM tbl_annual_quota WHERE year = ?", [year]
+      "SELECT * FROM tbl_annual_quota WHERE year = ? AND clanId = ?", [year, clanId]
     );
     if (!rows.length) {
-      return res.json({ year: parseInt(year), amountPerMember: 200000, description: "Chưa thiết lập" });
+      return res.json({ year: parseInt(year), amountPerMember: 200000, description: "Chưa thiết lập", clanId });
     }
     return res.json(rows[0]);
   } catch (err) {
@@ -107,31 +108,55 @@ router.get("/quota", async (req, res) => {
   }
 });
 
+// ── GET /api/finance/quotas — Danh sách tất cả định mức theo năm ──────────────
+router.get("/quotas", async (req, res) => {
+  try {
+    const clanId = req.user.clanId || "default";
+    const [rows] = await pool.query(
+      "SELECT * FROM tbl_annual_quota WHERE clanId = ? ORDER BY year DESC", [clanId]
+    );
+    return res.json({ data: rows });
+  } catch (err) {
+    return res.status(500).json({ error: "Lỗi server." });
+  }
+});
+
 // ── PUT /api/finance/quota ────────────────────────────────────────────────────
-router.put("/quota", requireRole("ADMIN", "LEADER"), async (req, res) => {
-  const { year, amountPerMember, description } = req.body;
+router.put("/quota", requireRole("TREASURER"), async (req, res) => {
+  const { year, amountPerMember, description, notes } = req.body;
   if (!year || !amountPerMember) {
     return res.status(400).json({ error: "Thiếu: year, amountPerMember." });
   }
-  if (amountPerMember < 0) {
-    return res.status(400).json({ error: "Định mức không được âm." });
+  if (amountPerMember <= 0) {
+    return res.status(400).json({ error: "Định mức phải lớn hơn 0." });
+  }
+  const currentYear = new Date().getFullYear();
+  if (parseInt(year) < 2000 || parseInt(year) > currentYear + 10) {
+    return res.status(400).json({ error: `Năm áp dụng phải từ 2000 đến ${currentYear + 10}.` });
   }
 
   try {
+    const clanId = req.user.clanId || "default";
     await pool.query(
-      `INSERT INTO tbl_annual_quota (year,amountPerMember,description)
-       VALUES (?,?,?)
-       ON DUPLICATE KEY UPDATE amountPerMember=VALUES(amountPerMember), description=VALUES(description)`,
-      [year, amountPerMember, description || null]
+      `INSERT INTO tbl_annual_quota (year, clanId, amountPerMember, description, notes)
+       VALUES (?,?,?,?,?)
+       ON DUPLICATE KEY UPDATE
+         amountPerMember=VALUES(amountPerMember),
+         description=VALUES(description),
+         notes=VALUES(notes),
+         updatedAt=CURRENT_TIMESTAMP`,
+      [year, clanId, amountPerMember, description || null, notes || null]
     );
 
     await pool.query(
       "INSERT INTO tbl_audit_logs (actorName,action,module,details) VALUES (?,?,?,?)",
       [req.user.fullName, "CẬP NHẬT ĐỊNH MỨC NIÊN LIỄM", "Finance",
-       `Định mức năm ${year}: ${Number(amountPerMember).toLocaleString()}đ/người`]
+       `Định mức năm ${year}: ${Number(amountPerMember).toLocaleString()}đ/người — ${description || ""}`.trim()]
     );
 
-    const [rows] = await pool.query("SELECT * FROM tbl_annual_quota WHERE year = ?", [year]);
+    const [rows] = await pool.query(
+      "SELECT * FROM tbl_annual_quota WHERE year = ? AND clanId = ?", [year, clanId]
+    );
     return res.json(rows[0]);
   } catch (err) {
     console.error(err);

@@ -11,7 +11,7 @@ import {
   Eye, Key, Copy, RefreshCw
 } from "lucide-react";
 import { UserAccount, AccountStatus, UserRole, AuditLog, ClanMember } from "../types";
-import { inviteCodesApi, accountsApi } from "../services/api";
+import { inviteCodesApi, accountsApi, authApi } from "../services/api";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const roleLabel: Record<string, string> = {
@@ -267,22 +267,28 @@ function EditAccountModal({ account, onClose, onSave }: {
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#8c4f2b]/30" />
             </div>
 
-            {/* Đổi vai trò */}
+            {/* Đổi vai trò — chỉ cho phép đổi giữa MEMBER và TREASURER, không đổi thành LEADER */}
             <div className="col-span-2">
               <label className="block text-xs font-semibold text-slate-600 mb-1">Vai trò</label>
-              <div className="grid grid-cols-3 gap-2">
-                {([
-                  { role: UserRole.MEMBER,    label: "Thành viên",    desc: "Xem, tra cứu" },
-                  { role: UserRole.TREASURER, label: "Ban tài chính", desc: "Quản lý quỹ" },
-                  { role: UserRole.LEADER,    label: "Trưởng họ",     desc: "Toàn quyền" },
-                ] as { role: UserRole; label: string; desc: string }[]).map(r => (
-                  <div key={r.role} onClick={() => set("role", r.role)}
-                    className={`p-2.5 border-2 rounded-xl cursor-pointer transition-colors ${form.role === r.role ? "border-[#8c4f2b] bg-amber-50" : "border-slate-200 hover:border-slate-300"}`}>
-                    <p className="text-xs font-bold text-slate-800">{r.label}</p>
-                    <p className="text-[10px] text-slate-500">{r.desc}</p>
-                  </div>
-                ))}
-              </div>
+              {account.role === UserRole.LEADER ? (
+                <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg">
+                  <span className="text-sm font-semibold text-slate-700">Trưởng họ</span>
+                  <span className="text-[11px] text-slate-400">— Toàn quyền · Không thể thay đổi</span>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    { role: UserRole.MEMBER,    label: "Thành viên",    desc: "Xem, tra cứu" },
+                    { role: UserRole.TREASURER, label: "Ban tài chính", desc: "Quản lý quỹ" },
+                  ] as { role: UserRole; label: string; desc: string }[]).map(r => (
+                    <div key={r.role} onClick={() => set("role", r.role)}
+                      className={`p-2.5 border-2 rounded-xl cursor-pointer transition-colors ${form.role === r.role ? "border-[#8c4f2b] bg-amber-50" : "border-slate-200 hover:border-slate-300"}`}>
+                      <p className="text-xs font-bold text-slate-800">{r.label}</p>
+                      <p className="text-[10px] text-slate-500">{r.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div>
@@ -385,6 +391,51 @@ function RequestDeleteModal({ account, onClose, onConfirm }: {
   );
 }
 
+// ─── Modal hiển thị mật khẩu tạm thời sau khi Admin cấp lại (Flow D - D5) ────
+function TempPasswordResultModal({ fullName, tempPassword, onClose }: {
+  fullName: string; tempPassword: string; onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(tempPassword);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between p-5 border-b">
+          <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+            <Key className="w-4 h-4 text-emerald-600" /> Đã cấp mật khẩu tạm thời
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 cursor-pointer"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-xs text-slate-600">
+            Mật khẩu tạm thời cho tài khoản <strong>{fullName}</strong>. Hệ thống chỉ hiển thị <strong>một lần duy nhất</strong> —
+            hãy thông báo ngay cho người dùng qua kênh liên hệ ngoài hệ thống (gọi điện, tin nhắn...).
+          </p>
+          <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+            <code className="flex-1 font-mono font-bold text-emerald-800 text-base tracking-wide">{tempPassword}</code>
+            <button onClick={handleCopy} className="p-2 hover:bg-emerald-100 rounded-lg text-emerald-700 cursor-pointer" title="Sao chép">
+              {copied ? <CheckCircle2 className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+            </button>
+          </div>
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+            <p className="text-[11px] text-amber-700 leading-relaxed">
+              Người dùng sẽ bị bắt buộc đổi mật khẩu ngay trong lần đăng nhập kế tiếp.
+            </p>
+          </div>
+          <button onClick={onClose} className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold cursor-pointer">
+            Đã thông báo cho người dùng, đóng lại
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Props ────────────────────────────────────────────────────────────────────
 interface AccountManagerProps {
   accounts: UserAccount[];
@@ -427,6 +478,54 @@ export default function AccountManager({
   const [newCodeNote, setNewCodeNote]           = useState("");
   const [creatingCode, setCreatingCode]         = useState(false);
   const [copiedCode, setCopiedCode]             = useState("");
+
+  // Yêu cầu cấp lại mật khẩu (Flow D — quên mật khẩu)
+  const [resetRequests, setResetRequests]       = useState<any[]>([]);
+  const [loadingResets, setLoadingResets]       = useState(false);
+  const [processingResetId, setProcessingResetId] = useState<string | number | null>(null);
+  const [tempPasswordResult, setTempPasswordResult] = useState<{ fullName: string; tempPassword: string } | null>(null);
+
+  const loadResetRequests = async () => {
+    setLoadingResets(true);
+    try {
+      const data = await authApi.getPasswordResetRequests();
+      setResetRequests(data);
+    } catch {
+      // Không chặn UI nếu tải thất bại — Admin có thể bấm làm mới lại
+    }
+    setLoadingResets(false);
+  };
+
+  useEffect(() => {
+    if (isAdmin) loadResetRequests();
+  }, [isAdmin]);
+
+  const handleProcessReset = async (req: any) => {
+    if (!window.confirm(`Cấp mật khẩu tạm thời mới cho "${req.fullName}"? Mật khẩu hiện tại của họ sẽ không còn dùng được.`)) return;
+    setProcessingResetId(req.id);
+    try {
+      const res = await authApi.processPasswordReset(req.id);
+      setTempPasswordResult({ fullName: req.fullName, tempPassword: res.tempPassword });
+      await loadResetRequests();
+    } catch (e: any) {
+      showToast(`❌ ${e.message}`);
+    }
+    setProcessingResetId(null);
+  };
+
+  const handleRejectReset = async (req: any) => {
+    const reason = window.prompt(`Lý do từ chối yêu cầu cấp lại mật khẩu của "${req.fullName}":`);
+    if (!reason) return;
+    try {
+      await authApi.rejectPasswordReset(req.id, reason);
+      await loadResetRequests();
+      showToast(`Đã từ chối yêu cầu cấp lại mật khẩu của ${req.fullName}`);
+    } catch (e: any) {
+      showToast(`❌ ${e.message}`);
+    }
+  };
+
+  const pendingResetRequests = resetRequests.filter(r => r.status === "PENDING");
 
   useEffect(() => {
     if ((isLeader || isAdmin) && showInvitePanel) {
@@ -497,6 +596,25 @@ export default function AccountManager({
     a.role !== UserRole.ADMIN &&
     a.role !== UserRole.GUEST
   );
+
+  // Admin: nhóm tài khoản theo từng dòng họ (clanId) — mỗi dòng họ 1 khối riêng
+  type ClanGroup = { clanId: string; clanName: string; accounts: UserAccount[] };
+  const clanGroups: ClanGroup[] = (() => {
+    if (!isAdmin) return [];
+    const map = new Map<string, ClanGroup>();
+    for (const acc of clanAccounts) {
+      const key = acc.clanId || "_unknown";
+      if (!map.has(key)) {
+        const leaderInGroup = clanAccounts.find(a => a.clanId === acc.clanId && a.role === UserRole.LEADER);
+        const fallbackName = key === "_unknown"
+          ? "Chưa gán dòng họ"
+          : (leaderInGroup ? `Dòng họ ${leaderInGroup.fullName}` : `Dòng họ (${key})`);
+        map.set(key, { clanId: key, clanName: acc.clanName || fallbackName, accounts: [] });
+      }
+      map.get(key)!.accounts.push(acc);
+    }
+    return Array.from(map.values()).sort((a, b) => a.clanName.localeCompare(b.clanName, "vi"));
+  })();
 
   // ── Xử lý ─────────────────────────────────────────────────────────────────
   const handleCreateLeader = async (form: any) => {
@@ -589,6 +707,13 @@ export default function AccountManager({
         <RequestDeleteModal account={deleteTarget} onClose={() => setDeleteTarget(null)}
           onConfirm={async (reason) => { await onRequestDeleteAccount(deleteTarget.id, reason); showToast(`Đã gửi yêu cầu xóa ${deleteTarget.fullName} tới Admin`); }} />
       )}
+      {tempPasswordResult && (
+        <TempPasswordResultModal
+          fullName={tempPasswordResult.fullName}
+          tempPassword={tempPasswordResult.tempPassword}
+          onClose={() => setTempPasswordResult(null)}
+        />
+      )}
 
       {/* ── ADMIN: Phê duyệt kỹ thuật ──────────────────────────────────────── */}
       {isAdmin && (
@@ -626,6 +751,72 @@ export default function AccountManager({
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── ADMIN: Yêu cầu cấp lại mật khẩu (Flow D — Quên mật khẩu) ───────── */}
+      {isAdmin && (
+        <div className="bg-white border border-emerald-100 rounded-2xl p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-4 pb-3 border-b border-emerald-50">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-emerald-50 rounded-lg"><Key className="w-5 h-5 text-emerald-600" /></div>
+              <div>
+                <h3 className="font-bold text-slate-800 text-sm">Yêu cầu cấp lại mật khẩu</h3>
+                <p className="text-[11px] text-slate-500">Người dùng quên mật khẩu gửi tới · {pendingResetRequests.length} chờ xử lý</p>
+              </div>
+            </div>
+            <button onClick={loadResetRequests} disabled={loadingResets}
+              className="flex items-center gap-1.5 px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50">
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingResets ? "animate-spin" : ""}`} /> Làm mới
+            </button>
+          </div>
+
+          {pendingResetRequests.length === 0 ? (
+            <p className="text-xs text-slate-400 text-center py-8">
+              {loadingResets ? "Đang tải..." : "✅ Không có yêu cầu cấp lại mật khẩu nào chờ xử lý"}
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {pendingResetRequests.map(req => (
+                <div key={req.id} className="border border-emerald-100 bg-emerald-50/20 rounded-xl p-4 flex flex-col sm:flex-row gap-4">
+                  <div className="flex-1 space-y-1 text-xs">
+                    <p className="font-bold text-slate-800">{req.fullName}</p>
+                    <p className="text-slate-500">🔑 Định danh đã nhập: {req.phoneOrEmail}</p>
+                    <p className="text-slate-400">
+                      Gửi lúc: {req.requestedAt ? new Date(req.requestedAt).toLocaleString("vi-VN") : "—"}
+                    </p>
+                  </div>
+                  <div className="flex sm:flex-col gap-2 justify-end flex-shrink-0">
+                    <button onClick={() => handleProcessReset(req)} disabled={processingResetId === req.id}
+                      className="flex items-center gap-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50">
+                      <Key className="w-3.5 h-3.5" /> {processingResetId === req.id ? "Đang cấp..." : "Cấp mật khẩu tạm thời"}
+                    </button>
+                    <button onClick={() => handleRejectReset(req)} disabled={processingResetId === req.id}
+                      className="flex items-center gap-1 px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50">
+                      <X className="w-3.5 h-3.5" /> Từ chối
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Lịch sử xử lý gần đây — phục vụ minh bạch/đối soát, không cần hành động thêm */}
+          {resetRequests.some(r => r.status !== "PENDING") && (
+            <div className="mt-4 pt-4 border-t border-slate-100">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Lịch sử đã xử lý</p>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                {resetRequests.filter(r => r.status !== "PENDING").map(r => (
+                  <div key={r.id} className="flex items-center justify-between text-[11px] text-slate-500 px-2 py-1.5 hover:bg-slate-50 rounded-lg">
+                    <span className="truncate">{r.fullName} · {r.phoneOrEmail}</span>
+                    <span className={`flex-shrink-0 font-bold px-2 py-0.5 rounded-full ${r.status === "PROCESSED" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                      {r.status === "PROCESSED" ? "Đã cấp lại" : "Đã từ chối"}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -706,17 +897,15 @@ export default function AccountManager({
             <div>
               <h3 className="font-bold text-slate-800 text-sm">Quản lý tài khoản thành viên</h3>
               <p className="text-[11px] text-slate-500">
-                Tài khoản thành viên trong dòng họ · {clanAccounts.length} tài khoản
+                {isAdmin
+                  ? `${clanGroups.length} dòng họ · ${clanAccounts.length} tài khoản`
+                  : `Tài khoản thành viên trong dòng họ · ${clanAccounts.length} tài khoản`}
               </p>
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            {clanAccounts.length === 0 ? (
-              <p className="text-xs text-slate-400 text-center py-8">
-                Chưa có tài khoản nào được ánh xạ vào gia phả
-              </p>
-            ) : (
+          {(() => {
+            const renderTable = (list: UserAccount[]) => (
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="bg-slate-50 border-b text-slate-500 font-bold text-[11px] uppercase tracking-wide">
@@ -728,7 +917,7 @@ export default function AccountManager({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {clanAccounts.map(acc => (
+                  {list.map(acc => (
                     <tr key={acc.id} className="hover:bg-slate-50/50 text-slate-700">
                       <td className="p-3 font-semibold text-slate-900">{acc.fullName}</td>
                       <td className="p-3 text-slate-500">
@@ -788,8 +977,38 @@ export default function AccountManager({
                   ))}
                 </tbody>
               </table>
-            )}
-          </div>
+            );
+
+            if (clanAccounts.length === 0) {
+              return (
+                <p className="text-xs text-slate-400 text-center py-8">
+                  Chưa có tài khoản nào được ánh xạ vào gia phả
+                </p>
+              );
+            }
+
+            // ADMIN: hiển thị theo từng khối dòng họ, mỗi khối có tên dòng họ ở trên
+            if (isAdmin) {
+              return (
+                <div className="space-y-6">
+                  {clanGroups.map(group => (
+                    <div key={group.clanId} className="border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="flex items-center justify-between bg-rose-50/60 px-4 py-2.5 border-b border-rose-100">
+                        <h4 className="text-xs font-bold text-rose-700 flex items-center gap-1.5">
+                          <Users className="w-3.5 h-3.5" /> {group.clanName}
+                        </h4>
+                        <span className="text-[10px] font-semibold text-rose-500">{group.accounts.length} tài khoản</span>
+                      </div>
+                      <div className="overflow-x-auto">{renderTable(group.accounts)}</div>
+                    </div>
+                  ))}
+                </div>
+              );
+            }
+
+            // TRƯỞNG HỌ: bảng đơn (chỉ thấy dòng họ của mình)
+            return <div className="overflow-x-auto">{renderTable(clanAccounts)}</div>;
+          })()}
         </div>
       )}
 

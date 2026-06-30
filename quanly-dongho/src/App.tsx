@@ -1,30 +1,11 @@
 /**
  * App.tsx — Điều phối chính của ứng dụng Quản lý Dòng họ
- *
- * Cấu trúc file:
- *   src/
- *   ├── context/AppContext.tsx        — Global state (auth, data, actions)
- *   ├── components/
- *   │   ├── ui.tsx                   — UI primitives (Badge, Card, Modal, Btn…)
- *   │   ├── AuthModals.tsx           — LoginModal, RegisterModal
- *   │   ├── Navbar.tsx               — Thanh điều hướng theo vai trò
- *   │   └── RoleSimulator.tsx        — Footer giả lập vai trò (dev/demo)
- *   ├── pages/
- *   │   ├── LandingPage.tsx          — Trang chủ (public)
- *   │   ├── GiaPhaPage.tsx           — Cây gia phả (ADMIN, LEADER, MEMBER, TREASURER)
- *   │   ├── MemberPage.tsx           — Bảng thành viên (ADMIN, LEADER, MEMBER, TREASURER)
- *   │   ├── EventsPage.tsx           — Sự kiện & lịch giỗ (LEADER, MEMBER, TREASURER)
- *   │   ├── FinancePage.tsx          — Quản lý quỹ (LEADER, TREASURER, view: MEMBER)
- *   │   ├── AccountsPage.tsx         — Kiểm toán & tài khoản (ADMIN, LEADER)
- *   │   ├── ProfilePage.tsx          — Tộc ước & hồ sơ dòng họ (public)
- *   │   └── index.tsx                — Page wrappers kết nối context với components
- *   └── data/seedData.ts             — Dữ liệu mẫu khởi tạo
  */
 import React from "react";
 import { AppProvider, useApp } from "./context/AppContext";
 import Navbar from "./components/Navbar";
 import RoleSimulator from "./components/RoleSimulator";
-import { LoginModal, RegisterModal } from "./components/AuthModals";
+import { LoginModal, RegisterModal, ChangePasswordModal } from "./components/AuthModals";
 import LandingPage from "./pages/LandingPage";
 import {
   GiaPhaPageWrapper,
@@ -33,6 +14,7 @@ import {
   FinancePageWrapper,
   AccountsPageWrapper,
   ProfilePageWrapper,
+  ClanInfoPageWrapper,
 } from "./pages/index";
 import { AccountStatus, UserRole } from "./types";
 import { Lock, Shield, Sparkles, UserX, ShieldAlert, Trash2 } from "lucide-react";
@@ -130,14 +112,21 @@ function AccessGuard({ children }: { children: React.ReactNode }) {
 function MainContent() {
   const { activeTab, isLoggedIn, currentAccount } = useApp();
 
-  if (activeTab === "landing") return <LandingPage />;
-  if (activeTab === "profile") return <ProfilePageWrapper />;
+  if (activeTab === "landing")    return <LandingPage />;
+  if (activeTab === "profile")    return <ProfilePageWrapper />;
+
+  if (activeTab === "clan_info") {
+    const canAccess = isLoggedIn && currentAccount.role === UserRole.LEADER;
+    return canAccess
+      ? <AccessGuard><ClanInfoPageWrapper /></AccessGuard>
+      : <AccessGuard><div /></AccessGuard>;
+  }
 
   // Protected routes
-  if (activeTab === "giamap") return <AccessGuard><GiaPhaPageWrapper /></AccessGuard>;
-  if (activeTab === "member_grid") return <AccessGuard><MemberPageWrapper /></AccessGuard>;
-  if (activeTab === "events") return <AccessGuard><EventsPageWrapper /></AccessGuard>;
-  if (activeTab === "finance") return <AccessGuard><FinancePageWrapper /></AccessGuard>;
+  if (activeTab === "giamap")       return <AccessGuard><GiaPhaPageWrapper /></AccessGuard>;
+  if (activeTab === "member_grid")  return <AccessGuard><MemberPageWrapper /></AccessGuard>;
+  if (activeTab === "events")       return <AccessGuard><EventsPageWrapper /></AccessGuard>;
+  if (activeTab === "finance")      return <AccessGuard><FinancePageWrapper /></AccessGuard>;
   if (activeTab === "accounts") {
     const canAccess = isLoggedIn &&
       (currentAccount.role === UserRole.ADMIN || currentAccount.role === UserRole.LEADER);
@@ -149,7 +138,10 @@ function MainContent() {
 
 // ─── App Shell ────────────────────────────────────────────────────────────────
 function AppShell() {
-  const { showLoginModal, showRegisterModal } = useApp();
+  const { showLoginModal, showRegisterModal, isLoggedIn, currentAccount } = useApp();
+
+  // Sau khi đăng nhập với mật khẩu tạm thời (Flow D5), buộc người dùng đổi mật khẩu ngay
+  const mustChangePw = isLoggedIn && (currentAccount as any)?.mustChangePassword;
 
   return (
     <div className="min-h-screen bg-stone-50/60">
@@ -163,6 +155,27 @@ function AppShell() {
 
       {showLoginModal && <LoginModal />}
       {showRegisterModal && <RegisterModal />}
+
+      {/* Buộc đổi mật khẩu khi admin cấp mật khẩu tạm thời (Flow D5) — không cho đóng */}
+      {mustChangePw && (
+        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="bg-amber-50 border-b border-amber-200 px-6 py-4 flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center">
+                <Lock className="w-4 h-4 text-amber-600" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-amber-900">Bắt buộc đổi mật khẩu</p>
+                <p className="text-xs text-amber-700">Bạn đang dùng mật khẩu tạm thời. Vui lòng đổi ngay để bảo vệ tài khoản.</p>
+              </div>
+            </div>
+            <ChangePasswordModal forceMode onClose={() => {
+              // Reload trang để cập nhật trạng thái mustChangePassword từ server
+              window.location.reload();
+            }} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

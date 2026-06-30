@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS tbl_accounts (
   mappedMemberId VARCHAR(50) DEFAULT NULL COMMENT 'Liên kết node gia phả',
   rejectionReason TEXT       DEFAULT NULL,
   blockReason   TEXT         DEFAULT NULL,
+  loginAttempts INT          NOT NULL DEFAULT 0 COMMENT 'Số lần đăng nhập sai liên tiếp (BR3)',
+  lockedUntil   DATETIME     DEFAULT NULL COMMENT 'Khóa tạm thời đến thời điểm này (BR3)',
+  mustChangePassword TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Bắt buộc đổi mật khẩu ở lần đăng nhập tiếp (S-2)',
   registeredAt  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_phone (phone),
@@ -119,10 +122,12 @@ CREATE TABLE IF NOT EXISTS tbl_transactions (
 -- ── Định mức niên liễm ──────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS tbl_annual_quota (
   year             INT          NOT NULL,
+  clanId           VARCHAR(100) NOT NULL DEFAULT 'default',
   amountPerMember  BIGINT       NOT NULL DEFAULT 200000,
-  description      VARCHAR(255) DEFAULT NULL,
+  description      VARCHAR(500) DEFAULT NULL,
+  notes            VARCHAR(500) DEFAULT NULL,
   updatedAt        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (year)
+  PRIMARY KEY (year, clanId)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ── Nhật ký kiểm toán ───────────────────────────────────────────────────────
@@ -172,3 +177,53 @@ CREATE TABLE IF NOT EXISTS tbl_invite_codes (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`;
 
 pool.query(CREATE_INVITE_CODES).catch(e => console.error('Schema invite_codes:', e.message));
+
+// ── Bảng yêu cầu cấp lại mật khẩu ──────────────────────────────────────────
+const CREATE_PASSWORD_RESET = `
+CREATE TABLE IF NOT EXISTS tbl_password_reset_requests (
+  id          INT          AUTO_INCREMENT NOT NULL,
+  accountId   VARCHAR(50)  NOT NULL,
+  fullName    VARCHAR(100) NOT NULL,
+  phoneOrEmail VARCHAR(100) NOT NULL,
+  status      ENUM('PENDING','PROCESSED','REJECTED') NOT NULL DEFAULT 'PENDING',
+  requestedAt TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  processedBy VARCHAR(100) DEFAULT NULL,
+  processedAt DATETIME     DEFAULT NULL,
+  rejectReason TEXT        DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY idx_accountId (accountId),
+  KEY idx_status    (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`;
+
+pool.query(CREATE_PASSWORD_RESET).catch(e => console.error('Schema password_reset_requests:', e.message));
+
+// ── Bảng tư liệu / hình ảnh sự kiện ──────────────────────────────────────────
+const CREATE_EVENT_MEDIA = `
+CREATE TABLE IF NOT EXISTS tbl_event_media (
+  id           VARCHAR(50)  NOT NULL,
+  eventId      VARCHAR(50)  NOT NULL,
+  fileName     VARCHAR(255) NOT NULL COMMENT 'Tên tệp lưu trên server (đã random hoá)',
+  originalName VARCHAR(255) NOT NULL COMMENT 'Tên tệp gốc do người dùng tải lên',
+  fileUrl      VARCHAR(500) NOT NULL,
+  fileType     ENUM('IMAGE','VIDEO','DOCUMENT') NOT NULL DEFAULT 'DOCUMENT',
+  mimeType     VARCHAR(150) DEFAULT NULL,
+  fileSize     INT          NOT NULL COMMENT 'Bytes',
+  uploadedBy   VARCHAR(100) DEFAULT NULL,
+  uploadedAt   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_eventId (eventId),
+  CONSTRAINT fk_media_event FOREIGN KEY (eventId) REFERENCES tbl_events(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`;
+
+pool.query(CREATE_EVENT_MEDIA).catch(e => console.error('Schema event_media:', e.message));
+
+// ── Migration: thêm cột mới vào tbl_accounts nếu chưa tồn tại ───────────────
+// Dùng stored procedure để tương thích MySQL 5.7 (không hỗ trợ ADD COLUMN IF NOT EXISTS)
+const MIGRATIONS = [
+  `ALTER TABLE tbl_accounts ADD COLUMN loginAttempts INT NOT NULL DEFAULT 0`,
+  `ALTER TABLE tbl_accounts ADD COLUMN lockedUntil DATETIME DEFAULT NULL`,
+  `ALTER TABLE tbl_accounts ADD COLUMN mustChangePassword TINYINT(1) NOT NULL DEFAULT 0`,
+];
+for (const sql of MIGRATIONS) {
+  pool.query(sql).catch(() => {}); // Bỏ qua lỗi "Duplicate column name" nếu cột đã tồn tại
+}

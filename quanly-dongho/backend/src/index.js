@@ -6,6 +6,7 @@ require("dotenv").config();
 
 const express    = require("express");
 const cors       = require("cors");
+const path       = require("path");
 const rateLimit  = require("express-rate-limit");
 const { testConnection } = require("./db/pool");
 const { runSchema }      = require("./db/schema");
@@ -13,6 +14,8 @@ const { runSchema }      = require("./db/schema");
 const authRouter     = require("./routes/auth");
 const membersRouter  = require("./routes/members");
 const eventsRouter   = require("./routes/events");
+const eventMediaRouter = require("./routes/eventMedia");
+const clanInfoRouter = require("./routes/clanInfo");
 const financeRouter  = require("./routes/finance");
 const accountsRouter = require("./routes/accounts");
 const inviteCodesRouter = require("./routes/inviteCodes");
@@ -52,9 +55,14 @@ const loginLimiter = rateLimit({
 app.use("/api/auth/login", loginLimiter);
 
 // ── Routes ────────────────────────────────────────────────────────────────────
+// Phục vụ tệp tư liệu sự kiện (ảnh/video/tài liệu) đã tải lên dưới dạng tĩnh
+app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
+
 app.use("/api/auth",         authRouter);
 app.use("/api/members",      membersRouter);
 app.use("/api/events",       eventsRouter);
+app.use("/api/events/:eventId/media", eventMediaRouter);
+app.use("/api/clan-info", clanInfoRouter);
 app.use("/api/finance",      financeRouter);
 app.use("/api/accounts",     accountsRouter);
 app.use("/api/invite-codes", inviteCodesRouter);

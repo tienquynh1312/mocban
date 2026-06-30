@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useApp, CLAN_PROFILE } from "../context/AppContext";
 import { UserRole, EventType, EventStatus, LivingStatus } from "../types";
 import GiaPhaTree from "./GiaPhaPage";
@@ -7,15 +7,17 @@ import CalendarMonth from "./EventsPage";
 import FinanceFund from "./FinancePage";
 import AccountManager from "./AccountsPage";
 import ClanProfileView from "./ProfilePage";
+import ClanInfoPage from "./ClanInfoPage";
 
 export function GiaPhaPageWrapper() {
-  const { members, accounts, currentAccount, addMember, updateMember, deleteMember, approveByLeader } = useApp();
+  const { members, accounts, currentAccount, addMember, updateMember, deleteMember, approveByLeader, unlinkAccountFromNode } = useApp();
   return (
     <GiaPhaTree members={members} currentAccount={currentAccount} allAccounts={accounts}
       onAddMember={(m: any) => addMember(m)} onUpdateMember={updateMember}
-      onDeleteMember={(id: string) => deleteMember(id)}
+      onDeleteMember={(id: string, reason: string, notes?: string) => deleteMember(id, reason, notes)}
       onLinkAccountToNode={(accountId: string, memberId: string) =>
-        approveByLeader(accountId, UserRole.MEMBER, memberId)} />
+        approveByLeader(accountId, UserRole.MEMBER, memberId)}
+      onUnlinkAccount={(accountId: string) => unlinkAccountFromNode(accountId)} />
   );
 }
 
@@ -23,12 +25,25 @@ export function MemberPageWrapper() {
   const { members, currentAccount, updateMember, deleteMember } = useApp();
   return (
     <MemberDataTable members={members} currentAccount={currentAccount}
-      onEditMember={updateMember} onDeleteMember={(id: string) => deleteMember(id)} />
+      onEditMember={updateMember}
+      onDeleteMember={(id: string, reason: string, notes?: string) => deleteMember(id, reason, notes)} />
   );
 }
 
 export function EventsPageWrapper() {
-  const { events, members, currentAccount, addEvent, updateEvent } = useApp();
+  const { events, members, accounts, currentAccount, addEvent, updateEvent, refreshEvents, submitRsvp } = useApp();
+
+  // Dữ liệu sự kiện/RSVP trước đây chỉ tải 1 lần lúc đăng nhập, nên nếu một tài khoản khác
+  // (ví dụ thành viên) RSVP hoặc Trưởng họ hủy/hoãn sự kiện ở phiên đăng nhập khác, phiên
+  // đang mở sẵn mục "Sự kiện" sẽ không tự thấy thay đổi đó. Tự tải lại mỗi khi vào tab này
+  // + định kỳ vài giây/lần để dữ liệu luôn gần như thời gian thực.
+  useEffect(() => {
+    refreshEvents();
+    const interval = setInterval(() => { refreshEvents(); }, 12000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleAutoGioc = () => {
     members.filter(m => m.livingStatus === LivingStatus.DECEASED && m.deathDateLunar).forEach(m => {
       const exists = events.some(e => e.type === EventType.DEATH_ANNIVERSARY && e.deceasedMemberId === m.id);
@@ -45,9 +60,10 @@ export function EventsPageWrapper() {
     });
   };
   return (
-    <CalendarMonth events={events} members={members} currentAccount={currentAccount}
+    <CalendarMonth events={events} members={members} accounts={accounts} currentAccount={currentAccount}
       onAddEvent={(e: any) => addEvent(e)} onUpdateEvent={updateEvent}
-      onAutoGenerateGiocles={handleAutoGioc} />
+      onAutoGenerateGiocles={handleAutoGioc} onRefresh={refreshEvents}
+      onSubmitRsvp={submitRsvp} />
   );
 }
 
@@ -55,7 +71,7 @@ export function FinancePageWrapper() {
   const { transactions, annualQuota, currentAccount, members, addTransaction, updateQuota } = useApp();
   return (
     <FinanceFund transactions={transactions} annualQuota={annualQuota} currentAccount={currentAccount}
-      allMembers={members} onAddTransaction={(t: any) => addTransaction(t)} onUpdateQuota={updateQuota} />
+      allMembers={members as any} onAddTransaction={(t: any) => addTransaction(t)} onUpdateQuota={updateQuota} />
   );
 }
 
@@ -101,8 +117,10 @@ export function AccountsPageWrapper() {
 
 export function ProfilePageWrapper() {
   const { currentAccount } = useApp();
-  const [profile, setProfile] = useState(CLAN_PROFILE);
-  return (
-    <ClanProfileView clanProfile={profile} currentAccount={currentAccount} onUpdateProfile={setProfile} />
-  );
+  return <ClanProfileView currentAccount={currentAccount} />;
+}
+
+export function ClanInfoPageWrapper() {
+  const { currentAccount } = useApp();
+  return <ClanInfoPage currentAccount={currentAccount} />;
 }

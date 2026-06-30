@@ -20,6 +20,15 @@ export function clearToken() {
   localStorage.removeItem("clan_jwt_token");
 }
 
+// Tệp tư liệu (ảnh/video/tài liệu) được backend trả về dưới dạng đường dẫn tương đối
+// (ví dụ "/uploads/events/abc.jpg") — cần ghép với gốc domain của API (bỏ "/api") để trỏ đúng.
+export function getMediaUrl(relativeUrl: string): string {
+  if (!relativeUrl) return "";
+  if (/^https?:\/\//.test(relativeUrl)) return relativeUrl;
+  const origin = BASE_URL.replace(/\/api\/?$/, "");
+  return `${origin}${relativeUrl}`;
+}
+
 // ─── Base fetch wrapper ───────────────────────────────────────────────────────
 
 async function request<T>(
@@ -52,7 +61,7 @@ async function request<T>(
 const get  = <T>(path: string)                => request<T>("GET",    path);
 const post = <T>(path: string, body: unknown) => request<T>("POST",   path, body);
 const put  = <T>(path: string, body: unknown) => request<T>("PUT",    path, body);
-const del  = <T>(path: string)                => request<T>("DELETE", path);
+const del  = <T>(path: string, body?: unknown) => request<T>("DELETE", path, body);
 
 // ─── Auth API ─────────────────────────────────────────────────────────────────
 
@@ -67,6 +76,24 @@ export const authApi = {
   }) => post<{ message: string }>("/auth/register", form),
 
   me: () => get<any>("/auth/me"),
+
+  changePassword: (oldPassword: string, newPassword: string, confirmPassword: string) =>
+    post<{ message: string }>("/auth/change-password", { oldPassword, newPassword, confirmPassword }),
+
+  changePasswordForced: (newPassword: string, confirmPassword: string) =>
+    post<{ message: string }>("/auth/change-password-forced", { newPassword, confirmPassword }),
+
+  forgotPassword: (phoneOrEmail: string) =>
+    post<{ message: string }>("/auth/forgot-password", { phoneOrEmail }),
+
+  getPasswordResetRequests: () =>
+    get<any[]>("/auth/password-reset-requests"),
+
+  processPasswordReset: (id: number) =>
+    put<{ message: string; tempPassword: string }>(`/auth/password-reset-requests/${id}/process`, {}),
+
+  rejectPasswordReset: (id: number, reason: string) =>
+    put<{ message: string }>(`/auth/password-reset-requests/${id}/reject`, { reason }),
 };
 
 // ─── Members API ──────────────────────────────────────────────────────────────
@@ -88,7 +115,8 @@ export const membersApi = {
 
   update: (id: string, member: Partial<any>) => put<any>(`/members/${id}`, member),
 
-  delete: (id: string) => del<{ message: string }>(`/members/${id}`),
+  delete: (id: string, reason?: string, notes?: string) =>
+    del<{ message: string }>(`/members/${id}`, { reason, notes }),
 };
 
 // ─── Events API ───────────────────────────────────────────────────────────────
@@ -127,8 +155,10 @@ export const financeApi = {
 
   quota: (year?: number) => get<any>(`/finance/quota${year ? `?year=${year}` : ""}`),
 
-  updateQuota: (year: number, amountPerMember: number, description?: string) =>
-    put<any>("/finance/quota", { year, amountPerMember, description }),
+  quotaList: () => get<any>("/finance/quotas"),
+
+  updateQuota: (year: number, amountPerMember: number, description?: string, notes?: string) =>
+    put<any>("/finance/quota", { year, amountPerMember, description, notes }),
 
   summary: (year?: number) => get<any>(`/finance/summary${year ? `?year=${year}` : ""}`),
 };
@@ -160,6 +190,10 @@ export const accountsApi = {
   approveLeader: (id: string, role: string, memberId?: string) =>
     put<{ message: string }>(`/accounts/${id}/approve-leader`, { role, memberId }),
 
+  // Alt Flow 4a (UC2.4): gỡ liên kết Node↔Tài khoản, đưa tài khoản về trạng thái tự do chờ map lại
+  unlinkMember: (id: string) =>
+    put<{ message: string }>(`/accounts/${id}/unlink-member`, {}),
+
   reject: (id: string, reason: string) =>
     put<{ message: string }>(`/accounts/${id}/reject`, { reason }),
 
@@ -185,4 +219,66 @@ export const accountsApi = {
 
   auditLogs: (page = 1, limit = 50) =>
     get<{ data: any[]; total: number }>(`/accounts/audit-logs?page=${page}&limit=${limit}`),
+};
+
+// ─── Event Media API (Tư liệu / Hình ảnh sự kiện) ─────────────────────────────
+// Upload dùng XMLHttpRequest thay vì fetch() vì cần sự kiện tiến trình (progress)
+// cho từng tệp khi tải lên (Step 6 trong workflow lưu trữ tư liệu).
+
+export const eventMediaApi = {
+  list: (eventId: string) => get<any[]>(`/events/${eventId}/media`),
+
+  upload: (eventId: string, files: File[], onProgress?: (percent: number) => void) => {
+    return new Promise<any[]>((resolve, reject) => {
+      const formData = new FormData();
+      files.forEach(f => formData.append("files", f, f.name));
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${BASE_URL}/events/${eventId}/media`);
+      const token = getToken();
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+      xhr.upload.onprogress = (e) => {
+        if (onProgress && e.lengthComputable) {
+          onProgress(Math.round((e.loaded / e.total) * 100));
+        }
+      };
+      xhr.onload = () => {
+        let data: any = {};
+        try { data = JSON.parse(xhr.responseText); } catch { /* phản hồi không hợp lệ */ }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(data);
+        } else {
+          reject(new Error(data?.error || `Tải tệp lên thất bại (HTTP ${xhr.status}).`));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Lỗi kết nối khi tải tệp lên."));
+      xhr.send(formData);
+    });
+  },
+
+  remove: (eventId: string, mediaId: string) =>
+    del<{ message: string }>(`/events/${eventId}/media/${mediaId}`),
+};
+// Thêm đoạn này vào cuối file: src/services/api.ts
+// (bên cạnh accountsApi, membersApi, v.v.)
+
+// ─── Clan Info API ────────────────────────────────────────────────────────────
+export const clanInfoApi = {
+  /** Lấy thông tin dòng họ hiện tại (bước 2 — workflow) */
+  get: () => get<any>("/clan-info"),
+
+  /** Lấy danh sách lịch sử cập nhật (hiển thị cột phải) */
+  history: (limit = 20) => get<any[]>(`/clan-info/history?limit=${limit}`),
+
+  /** Lưu / cập nhật thông tin dòng họ — BR1: chỉ LEADER */
+  update: (data: {
+    clanName: string;
+    originHistory: string;
+    homeTown: string;
+    currentResidenceArea?: string;
+    templeAddress: string;
+    ancestorDayLunar: string;
+    clanRegulations: string;
+  }) => put<{ message: string; data: any }>("/clan-info", data),
 };

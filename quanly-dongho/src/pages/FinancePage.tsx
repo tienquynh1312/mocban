@@ -6,17 +6,22 @@
 import React, { useState, useMemo } from "react";
 import { 
   TrendingUp, TrendingDown, DollarSign, Plus, Search, Filter, 
-  Settings, User, Clock, CheckCircle, HelpCircle, X, Percent, Download
+  Settings, User, Clock, CheckCircle, HelpCircle, X, Percent, Download, BarChart3
 } from "lucide-react";
-import { FundTransaction, FundCategory, TransactionType, UserRole, UserAccount, AnnualQuota } from "../types";
+import { FundTransaction, FundCategory, TransactionType, UserRole, UserAccount, AnnualQuota, ClanMember } from "../types";
+import QuotaSettingPage from "./QuotaSettingPage";
+import AnnualFeeCollectionPage from "./AnnualFeeCollectionPage";
+import ExtraContributionPage from "./ExtraContributionPage";
+import IncomeReportPage from "./IncomeReportPage";
+import ExpenseReportPage from "./ExpenseReportPage";
 
 interface FinanceFundProps {
   transactions: FundTransaction[];
   annualQuota: AnnualQuota;
   currentAccount: UserAccount;
-  allMembers: { id: string; fullName: string }[];
+  allMembers: ClanMember[];
   onAddTransaction: (newTx: Omit<FundTransaction, "id">) => void;
-  onUpdateQuota: (updatedQuota: AnnualQuota) => void;
+  onUpdateQuota: (updatedQuota: AnnualQuota) => Promise<void>;
 }
 
 export default function FinanceFund({
@@ -34,6 +39,7 @@ export default function FinanceFund({
   // State Modal Thêm giao dịch tài khóa
   const [showAddTxModal, setShowAddTxModal] = useState(false);
   const [showQuotaModal, setShowQuotaModal] = useState(false);
+  const [activeTab, setActiveTab] = useState<"fund" | "quota_setting" | "fee_collection" | "extra_contribution" | "income_report" | "expense_report">("fund");
 
   const [txForm, setTxForm] = useState({
     type: TransactionType.INCOME,
@@ -142,45 +148,40 @@ const isTreasurerOrLeader = currentAccount.role === UserRole.TREASURER;
   };
 
   // 2. VẼ BIỂU ĐỒ DIỄN BIẾN SỐ TIỀN THU CHI BẰNG CUSTOM RESPONSIVE SVG
-  // Chúng ta gộp dữ liệu theo tháng: Tháng 1 tới Tháng 6 năm 2026
+  // Gộp dữ liệu THẬT theo từng tháng (T1 → T12) của năm hiện tại, lấy trực tiếp
+  // từ danh sách `transactions` — đồng bộ với mọi nơi khác trong hệ thống.
   const chartData = useMemo(() => {
-    // Tháng 2, tháng 4, tháng 5 phát sinh giao dịch nhiều
-    const monthlyStats = [
-      { month: "T1", thu: 0, chi: 0 },
-      { month: "T2", thu: 2500000, chi: 0 },
-      { month: "T3", thu: 0, chi: 0 },
-      { month: "T4", thu: 17000000, chi: 5500000 },
-      { month: "T5", thu: 0, chi: 11000000 },
-      { month: "T6", thu: 0, chi: 0 },
-    ];
+    const year = new Date().getFullYear();
+    const monthlyStats = Array.from({ length: 12 }, (_, i) => ({ month: `T${i + 1}`, thu: 0, chi: 0 }));
 
-    // Cộng dồn giao dịch ảo mới phát sinh của người dùng dùng vào T6
     transactions.forEach(t => {
-      const monthIndex = new Date(t.date).getMonth();
-      if (monthIndex >= 0 && monthIndex < 6) {
-        if (t.id.startsWith("tx_new")) { // Các thẻ giao dịch mới
-          if (t.type === TransactionType.INCOME) monthlyStats[5].thu += t.amount;
-          else monthlyStats[5].chi += t.amount;
-        }
-      }
+      const d = new Date(t.date);
+      if (d.getFullYear() !== year) return;
+      const idx = d.getMonth();
+      if (idx < 0 || idx > 11) return;
+      if (t.type === TransactionType.INCOME) monthlyStats[idx].thu += t.amount;
+      else monthlyStats[idx].chi += t.amount;
     });
 
     return monthlyStats;
   }, [transactions]);
 
   // Các điểm tọa độ vẽ biểu đồ
-  const maxVal = 20000000; // 20 triệu VNĐ làm mốc tối đa
-  const chartWidth = 560;
+  const chartWidth = 720;
   const chartHeight = 160;
+  const xStep = chartWidth / (chartData.length - 1);
+  // Mốc tối đa trục Y luôn bám theo giá trị thu/chi cao nhất thực tế (tối thiểu 1 triệu để biểu đồ không bị dẹt khi chưa có dữ liệu)
+  const maxVal = Math.max(...chartData.map(d => Math.max(d.thu, d.chi)), 1000000);
+  const fmtTr = (v: number) => `${(v / 1000000).toFixed(1)} Tr`;
 
   const pointsThu = chartData.map((d, i) => {
-    const x = 40 + i * (chartWidth / 6);
+    const x = 40 + i * xStep;
     const y = chartHeight - 20 - (d.thu / maxVal) * (chartHeight - 40);
     return { x, y };
   });
 
   const pointsChi = chartData.map((d, i) => {
-    const x = 40 + i * (chartWidth / 6);
+    const x = 40 + i * xStep;
     const y = chartHeight - 20 - (d.chi / maxVal) * (chartHeight - 40);
     return { x, y };
   });
@@ -190,6 +191,122 @@ const isTreasurerOrLeader = currentAccount.role === UserRole.TREASURER;
 
   return (
     <div className="flex flex-col gap-6">
+      {/* ── Tab navigation ── */}
+      <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
+        <button
+          onClick={() => setActiveTab("fund")}
+          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            activeTab === "fund"
+              ? "bg-white text-rose-700 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          Thống kê tổng hợp
+        </button>
+        <button
+          onClick={() => setActiveTab("quota_setting")}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            activeTab === "quota_setting"
+              ? "bg-white text-rose-700 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          <Settings className="w-3.5 h-3.5" /> Thiết lập định mức
+        </button>
+        <button
+          onClick={() => setActiveTab("fee_collection")}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            activeTab === "fee_collection"
+              ? "bg-white text-emerald-700 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          <TrendingUp className="w-3.5 h-3.5" /> Thu quỹ định mức
+        </button>
+        <button
+          onClick={() => setActiveTab("extra_contribution")}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            activeTab === "extra_contribution"
+              ? "bg-white text-indigo-700 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          <DollarSign className="w-3.5 h-3.5" /> Đóng góp ngoài định mức
+        </button>
+        <button
+          onClick={() => setActiveTab("income_report")}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            activeTab === "income_report"
+              ? "bg-white text-rose-700 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          <BarChart3 className="w-3.5 h-3.5" /> Báo cáo tiền thu
+        </button>
+        <button
+          onClick={() => setActiveTab("expense_report")}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            activeTab === "expense_report"
+              ? "bg-white text-orange-700 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          <TrendingDown className="w-3.5 h-3.5" /> Báo cáo tiền chi
+        </button>
+      </div>
+
+      {/* ── Tab: Báo cáo tiền thu ── */}
+      {activeTab === "income_report" && (
+        <IncomeReportPage
+          members={allMembers}
+          transactions={transactions}
+          annualQuota={annualQuota}
+          currentAccount={currentAccount}
+          onAddTransaction={onAddTransaction}
+        />
+      )}
+
+      {/* ── Tab: Báo cáo tiền chi ── */}
+      {activeTab === "expense_report" && (
+        <ExpenseReportPage
+          transactions={transactions}
+          currentAccount={currentAccount}
+          onAddTransaction={onAddTransaction}
+        />
+      )}
+
+      {/* ── Tab: Thiết lập định mức ── */}
+      {activeTab === "quota_setting" && (
+        <QuotaSettingPage
+          currentAccount={currentAccount}
+          annualQuota={annualQuota}
+          onUpdateQuota={onUpdateQuota}
+        />
+      )}
+
+      {/* ── Tab: Thu quỹ định mức ── */}
+      {activeTab === "fee_collection" && (
+        <AnnualFeeCollectionPage
+          members={allMembers}
+          transactions={transactions}
+          annualQuota={annualQuota}
+          currentAccount={currentAccount}
+          onAddTransaction={onAddTransaction}
+        />
+      )}
+
+      {/* ── Tab: Đóng góp ngoài định mức ── */}
+      {activeTab === "extra_contribution" && (
+        <ExtraContributionPage
+          members={allMembers}
+          transactions={transactions}
+          currentAccount={currentAccount}
+          onAddTransaction={onAddTransaction}
+        />
+      )}
+
+      {/* ── Tab: Sổ thu chi quỹ (toàn bộ nội dung gốc) ── */}
+      {activeTab === "fund" && (<>
       {/* 3.1 CHỈ SỐ TÀI CHÍNH (METRICS SUMMARY CARDS) */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {/* Số dư hiện dụng */}
@@ -266,22 +383,22 @@ const isTreasurerOrLeader = currentAccount.role === UserRole.TREASURER;
 
       {/* 3.2 BIỂU ĐỒ BÁO CÁO DIỄN BIẾN SỐ TIỀN (CUSTOM ANALYTICS SVG CHART) */}
       <div className="bg-white border border-rose-105 rounded-2xl p-6 shadow-xs">
-        <h3 className="font-sans font-semibold text-slate-900 text-xs uppercase tracking-wider mb-4">Biểu đồ đối soát ngân sách thu chi hằng tháng (đơn vị: vnđ)</h3>
+        <h3 className="font-sans font-semibold text-slate-900 text-xs uppercase tracking-wider mb-4">Biểu đồ đối soát ngân sách thu chi hằng tháng — Năm {new Date().getFullYear()} (đơn vị: vnđ)</h3>
         <div className="w-full overflow-x-auto">
-          <svg className="w-[600px] h-[180px] overflow-visible">
+          <svg className="w-[760px] h-[180px] overflow-visible">
             {/* Đường trục phụ trợ */}
-            <line x1="40" y1="20" x2="560" y2="20" stroke="#f1f5f9" strokeWidth="1" />
-            <line x1="40" y1="80" x2="560" y2="80" stroke="#f1f5f9" strokeWidth="1" />
-            <line x1="40" y1="140" x2="560" y2="140" stroke="#f1f5f9" strokeWidth="1.5" />
+            <line x1="40" y1="20" x2={40 + chartWidth} y2="20" stroke="#f1f5f9" strokeWidth="1" />
+            <line x1="40" y1="80" x2={40 + chartWidth} y2="80" stroke="#f1f5f9" strokeWidth="1" />
+            <line x1="40" y1="140" x2={40 + chartWidth} y2="140" stroke="#f1f5f9" strokeWidth="1.5" />
 
-            {/* Chú giải trục Y */}
-            <text x="5" y="25" fill="#94a3b8" className="text-[8px] font-mono">20 Tr</text>
-            <text x="5" y="85" fill="#94a3b8" className="text-[8px] font-mono">10 Tr</text>
+            {/* Chú giải trục Y — luôn bám theo dữ liệu thật (maxVal) */}
+            <text x="5" y="25" fill="#94a3b8" className="text-[8px] font-mono">{fmtTr(maxVal)}</text>
+            <text x="5" y="85" fill="#94a3b8" className="text-[8px] font-mono">{fmtTr(maxVal / 2)}</text>
             <text x="5" y="145" fill="#94a3b8" className="text-[8px] font-mono">0 VNĐ</text>
 
             {/* Các nhãn tháng trục X */}
             {chartData.map((d, i) => (
-              <text key={i} x={40 + i * (chartWidth / 6)} y="165" fill="#64748b" className="text-[9px] font-mono font-bold" textAnchor="middle">
+              <text key={i} x={40 + i * xStep} y="165" fill="#64748b" className="text-[9px] font-mono font-bold" textAnchor="middle">
                 {d.month}
               </text>
             ))}
@@ -292,7 +409,7 @@ const isTreasurerOrLeader = currentAccount.role === UserRole.TREASURER;
               <g key={`point-thu-${idx}`}>
                 <circle cx={p.x} cy={p.y} r="4" fill="#ffffff" stroke="#10b981" strokeWidth="2" />
                 <text x={p.x} y={p.y - 8} fill="#059669" className="text-[8px] font-bold" textAnchor="middle">
-                  {chartData[idx].thu > 0 ? `${chartData[idx].thu / 1000000}Tr` : ""}
+                  {chartData[idx].thu > 0 ? fmtTr(chartData[idx].thu) : ""}
                 </text>
               </g>
             ))}
@@ -303,7 +420,7 @@ const isTreasurerOrLeader = currentAccount.role === UserRole.TREASURER;
               <g key={`point-chi-${idx}`}>
                 <circle cx={p.x} cy={p.y} r="4" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
                 <text x={p.x} y={p.y - 8} fill="#dc2626" className="text-[8px] font-bold" textAnchor="middle">
-                  {chartData[idx].chi > 0 ? `${chartData[idx].chi / 1000000}Tr` : ""}
+                  {chartData[idx].chi > 0 ? fmtTr(chartData[idx].chi) : ""}
                 </text>
               </g>
             ))}
@@ -364,26 +481,7 @@ const isTreasurerOrLeader = currentAccount.role === UserRole.TREASURER;
               <option value={FundCategory.CHARITY_STUDY}>Chi khuyến học/Mừng thọ</option>
             </select>
 
-            {isTreasurerOrLeader && (
-              <button
-                id="btn-finance-add-tx"
-                onClick={() => {
-                  setTxForm({
-                    type: TransactionType.INCOME,
-                    category: FundCategory.ANNUAL_FEE,
-                    amount: annualQuota.amountPerMember,
-                    date: new Date().toISOString().split("T")[0],
-                    payerOrReceiver: "",
-                    memberId: "",
-                    description: "",
-                  });
-                  setShowAddTxModal(true);
-                }}
-                className="flex items-center gap-1 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" /> Ghi thu/chi quỹ
-              </button>
-            )}
+
 
             {/* Nút xuất báo cáo CSV (R4.4, R4.7) */}
             <div className="flex gap-1">
@@ -680,6 +778,7 @@ const isTreasurerOrLeader = currentAccount.role === UserRole.TREASURER;
           </div>
         </div>
       )}
+      </>)}
     </div>
   );
 }
